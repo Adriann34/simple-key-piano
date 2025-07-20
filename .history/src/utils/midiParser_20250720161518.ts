@@ -20,6 +20,22 @@ interface TimeSignatureData {
   confidence: number;
 }
 
+// Advanced quantization with tolerance and musical intelligence
+interface QuantizationResult {
+  quantizedTime: number;
+  originalTime: number;
+  confidence: number;
+  noteValue: string;
+}
+
+// Voice analysis for intelligent separation
+interface VoiceAnalysisResult {
+  voiceId: number;
+  preferredClef: 'treble' | 'bass';
+  averagePitch: number;
+  rhythmicComplexity: number;
+}
+
 export const parseMidiFile = (file: File): Promise<MidiData> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -39,7 +55,7 @@ export const parseMidiFile = (file: File): Promise<MidiData> => {
         let keySignatureFound = false;
         let tempoChanges: Array<{ time: number; tempo: number }> = [];
         
-        // Extract all MIDI events
+        // Extract all MIDI events with enhanced parsing
         midiData.track.forEach((track, trackIndex) => {
           currentTime = 0;
           
@@ -96,7 +112,7 @@ export const parseMidiFile = (file: File): Promise<MidiData> => {
                 delete noteOnEvents[noteNumber];
               }
             }
-            // Meta events - Fixed time signature extraction
+            // Enhanced Meta events parsing
             else if (event.type === 255 && event.data && event.data.length > 0) {
               // Time signature (0x58)
               if (event.data[0] === 0x58 && event.data.length >= 5) {
@@ -114,7 +130,7 @@ export const parseMidiFile = (file: File): Promise<MidiData> => {
               }
               // Key signature (0x59)
               else if (event.data[0] === 0x59 && event.data.length >= 3) {
-                keySignature = event.data[2]; // Signed byte for sharps/flats
+                keySignature = event.data[2];
                 keySignatureFound = true;
                 
                 console.log(`Key signature found: ${keySignature} sharps/flats`);
@@ -134,18 +150,21 @@ export const parseMidiFile = (file: File): Promise<MidiData> => {
         // Sort notes by start time
         notes.sort((a, b) => a.startTime - b.startTime);
         
+        // Apply advanced quantization
+        const quantizedNotes = applyAdvancedQuantization(notes, midiData.timeDivision, timeSignature);
+        
         // Intelligent key detection if not found in MIDI
-        const detectedKey = keySignatureFound ? parseKeySignature(keySignature) : detectKeySignature(notes);
+        const detectedKey = keySignatureFound ? parseKeySignature(keySignature) : detectKeySignature(quantizedNotes);
         
         // Use detected time signature or fallback to intelligent detection
         const detectedTimeSignature = timeSignatureFound 
           ? { ...timeSignature, confidence: 1.0 }
-          : detectTimeSignature(notes, midiData.timeDivision);
+          : detectTimeSignature(quantizedNotes, midiData.timeDivision);
         
         console.log('Final time signature:', detectedTimeSignature);
         
         resolve({
-          notes,
+          notes: quantizedNotes,
           ticksPerQuarter: midiData.timeDivision,
           timeSignature: {
             numerator: detectedTimeSignature.numerator,
@@ -171,7 +190,178 @@ export const parseMidiFile = (file: File): Promise<MidiData> => {
   });
 };
 
-// Enhanced time signature detection with better pattern recognition
+// Advanced quantization algorithm with tolerance and musical intelligence
+function applyAdvancedQuantization(
+  notes: MidiNote[], 
+  ticksPerQuarter: number, 
+  timeSignature: { numerator: number; denominator: number }
+): MidiNote[] {
+  // Define quantization grid based on time signature
+  const quantizationLevels = getQuantizationLevels(ticksPerQuarter, timeSignature);
+  
+  return notes.map(note => {
+    const quantizeResult = quantizeNoteWithTolerance(
+      note.startTime, 
+      note.duration, 
+      quantizationLevels, 
+      ticksPerQuarter
+    );
+    
+    return {
+      ...note,
+      startTime: quantizeResult.quantizedTime,
+      duration: quantizeDuration(note.duration, quantizationLevels, ticksPerQuarter)
+    };
+  });
+}
+
+// Get quantization levels based on musical context
+function getQuantizationLevels(ticksPerQuarter: number, timeSignature: { numerator: number; denominator: number }): number[] {
+  const levels: number[] = [];
+  
+  // Base note values
+  const wholeNote = ticksPerQuarter * 4;
+  const halfNote = ticksPerQuarter * 2;
+  const quarterNote = ticksPerQuarter;
+  const eighthNote = ticksPerQuarter / 2;
+  const sixteenthNote = ticksPerQuarter / 4;
+  const thirtySecondNote = ticksPerQuarter / 8;
+  
+  // Add basic levels
+  levels.push(wholeNote, halfNote, quarterNote, eighthNote, sixteenthNote, thirtySecondNote);
+  
+  // Add triplet levels for compound time signatures
+  if (timeSignature.numerator % 3 === 0 || timeSignature.denominator === 8) {
+    levels.push(
+      quarterNote * 2 / 3,  // Half note triplet
+      quarterNote / 3,      // Eighth note triplet
+      eighthNote / 3        // Sixteenth note triplet
+    );
+  }
+  
+  // Add dotted note values
+  levels.push(
+    quarterNote * 1.5,    // Dotted quarter
+    eighthNote * 1.5,     // Dotted eighth
+    sixteenthNote * 1.5   // Dotted sixteenth
+  );
+  
+  return levels.sort((a, b) => a - b);
+}
+
+// Quantize note timing with tolerance and musical intelligence
+function quantizeNoteWithTolerance(
+  startTime: number, 
+  duration: number, 
+  quantizationLevels: number[], 
+  ticksPerQuarter: number
+): QuantizationResult {
+  const tolerance = ticksPerQuarter / 16; // Sixteenth note tolerance
+  
+  // Find closest quantization point
+  let bestQuantizedTime = startTime;
+  let minDistance = Infinity;
+  let confidence = 0;
+  
+  // Check against measure boundaries and beat positions
+  const measureLength = ticksPerQuarter * 4; // Assuming 4/4 for simplicity
+  const measureStart = Math.floor(startTime / measureLength) * measureLength;
+  
+  for (let i = 0; i < 16; i++) { // Check 16 subdivisions per measure
+    const gridPoint = measureStart + (measureLength * i / 16);
+    const distance = Math.abs(startTime - gridPoint);
+    
+    if (distance < minDistance && distance <= tolerance) {
+      minDistance = distance;
+      bestQuantizedTime = gridPoint;
+      confidence = 1 - (distance / tolerance);
+    }
+  }
+  
+  // If no good quantization found, use original timing
+  if (confidence < 0.3) {
+    bestQuantizedTime = startTime;
+    confidence = 0;
+  }
+  
+  return {
+    quantizedTime: bestQuantizedTime,
+    originalTime: startTime,
+    confidence: confidence,
+    noteValue: getNoteValueFromDuration(duration, ticksPerQuarter)
+  };
+}
+
+// Quantize note duration to standard musical values
+function quantizeDuration(duration: number, quantizationLevels: number[], ticksPerQuarter: number): number {
+  let bestDuration = duration;
+  let minDistance = Infinity;
+  
+  quantizationLevels.forEach(level => {
+    const distance = Math.abs(duration - level);
+    if (distance < minDistance) {
+      minDistance = distance;
+      bestDuration = level;
+    }
+  });
+  
+  // Ensure minimum duration
+  const minDuration = ticksPerQuarter / 32; // Thirty-second note minimum
+  return Math.max(bestDuration, minDuration);
+}
+
+// Get note value string from duration
+function getNoteValueFromDuration(duration: number, ticksPerQuarter: number): string {
+  const ratio = duration / ticksPerQuarter;
+  
+  if (ratio >= 3.75) return 'whole';
+  if (ratio >= 1.875) return 'half';
+  if (ratio >= 0.9375) return 'quarter';
+  if (ratio >= 0.46875) return 'eighth';
+  if (ratio >= 0.234375) return 'sixteenth';
+  return 'thirty-second';
+}
+
+// Analyze voices for intelligent separation
+function analyzeVoices(notes: MidiNote[]): VoiceAnalysisResult[] {
+  const voices: Map<number, MidiNote[]> = new Map();
+  
+  // Group notes by simultaneous timing (potential voices)
+  notes.forEach(note => {
+    const timeKey = Math.round(note.startTime / 10) * 10; // 10-tick tolerance
+    if (!voices.has(timeKey)) {
+      voices.set(timeKey, []);
+    }
+    voices.get(timeKey)!.push(note);
+  });
+  
+  // Analyze each voice
+  const voiceAnalysis: VoiceAnalysisResult[] = [];
+  let voiceId = 0;
+  
+  voices.forEach(voiceNotes => {
+    if (voiceNotes.length > 0) {
+      const averagePitch = voiceNotes.reduce((sum, note) => sum + note.noteNumber, 0) / voiceNotes.length;
+      const preferredClef = averagePitch >= 60 ? 'treble' : 'bass'; // Middle C split
+      
+      // Calculate rhythmic complexity
+      const durations = voiceNotes.map(note => note.duration);
+      const uniqueDurations = new Set(durations).size;
+      const rhythmicComplexity = uniqueDurations / voiceNotes.length;
+      
+      voiceAnalysis.push({
+        voiceId: voiceId++,
+        preferredClef,
+        averagePitch,
+        rhythmicComplexity
+      });
+    }
+  });
+  
+  return voiceAnalysis;
+}
+
+// Enhanced time signature detection with pattern recognition
 function detectTimeSignature(notes: MidiNote[], ticksPerQuarter: number): TimeSignatureData {
   if (notes.length === 0) return { numerator: 4, denominator: 4, confidence: 0.5 };
   
@@ -189,69 +379,56 @@ function detectTimeSignature(notes: MidiNote[], ticksPerQuarter: number): TimeSi
   
   if (intervals.length === 0) return { numerator: 4, denominator: 4, confidence: 0.5 };
   
-  // Quantize intervals to common note values
-  const quantizedIntervals: { [key: string]: number } = {};
+  // Advanced pattern analysis
+  const beatPatterns = analyzeBeatPatterns(intervals, ticksPerQuarter);
+  const timeSignatureCandidate = detectTimeSignatureFromPatterns(beatPatterns);
   
+  return timeSignatureCandidate;
+}
+
+// Analyze beat patterns for time signature detection
+function analyzeBeatPatterns(intervals: number[], ticksPerQuarter: number): Map<string, number> {
+  const patterns = new Map<string, number>();
+  
+  // Quantize intervals to standard note values
   intervals.forEach(interval => {
-    const wholeNote = ticksPerQuarter * 4;
-    const halfNote = ticksPerQuarter * 2;
-    const quarterNote = ticksPerQuarter;
-    const eighthNote = ticksPerQuarter / 2;
-    const sixteenthNote = ticksPerQuarter / 4;
-    
-    // Find closest quantized value
-    const candidates = [
-      { value: wholeNote, name: 'whole' },
-      { value: halfNote, name: 'half' },
-      { value: quarterNote, name: 'quarter' },
-      { value: eighthNote, name: 'eighth' },
-      { value: sixteenthNote, name: 'sixteenth' }
-    ];
-    
-    let closest = candidates[0];
-    let minDiff = Math.abs(interval - closest.value);
-    
-    candidates.forEach(candidate => {
-      const diff = Math.abs(interval - candidate.value);
-      if (diff < minDiff) {
-        closest = candidate;
-        minDiff = diff;
-      }
-    });
-    
-    // Only count if reasonably close to a standard note value
-    if (minDiff < quarterNote * 0.3) {
-      quantizedIntervals[closest.name] = (quantizedIntervals[closest.name] || 0) + 1;
-    }
+    const noteValue = getNoteValueFromDuration(interval, ticksPerQuarter);
+    patterns.set(noteValue, (patterns.get(noteValue) || 0) + 1);
   });
   
-  // Analyze patterns to determine time signature
-  const totalQuantized = Object.values(quantizedIntervals).reduce((sum, count) => sum + count, 0);
-  
-  if (totalQuantized === 0) return { numerator: 4, denominator: 4, confidence: 0.5 };
+  return patterns;
+}
+
+// Detect time signature from beat patterns
+function detectTimeSignatureFromPatterns(patterns: Map<string, number>): TimeSignatureData {
+  const totalCount = Array.from(patterns.values()).reduce((sum, count) => sum + count, 0);
   
   // Calculate percentages
-  const quarterPercentage = (quantizedIntervals['quarter'] || 0) / totalQuantized;
-  const eighthPercentage = (quantizedIntervals['eighth'] || 0) / totalQuantized;
-  const halfPercentage = (quantizedIntervals['half'] || 0) / totalQuantized;
+  const quarterPercentage = (patterns.get('quarter') || 0) / totalCount;
+  const eighthPercentage = (patterns.get('eighth') || 0) / totalCount;
+  const halfPercentage = (patterns.get('half') || 0) / totalCount;
+  const sixteenthPercentage = (patterns.get('sixteenth') || 0) / totalCount;
   
-  // Determine most likely time signature based on interval patterns
-  if (eighthPercentage > 0.4 && quarterPercentage < 0.3) {
-    // Lots of eighth notes, likely compound time
-    if (eighthPercentage > 0.6) {
-      return { numerator: 6, denominator: 8, confidence: 0.8 }; // 6/8 time
+  // Advanced heuristics for time signature detection
+  if (eighthPercentage > 0.5 && quarterPercentage < 0.3) {
+    // Lots of eighth notes suggest compound time
+    if (sixteenthPercentage > 0.2) {
+      return { numerator: 6, denominator: 8, confidence: 0.8 };
     } else {
-      return { numerator: 3, denominator: 8, confidence: 0.7 }; // 3/8 time
+      return { numerator: 9, denominator: 8, confidence: 0.7 };
     }
   } else if (quarterPercentage > 0.4) {
-    // Lots of quarter notes
-    if (halfPercentage > 0.2) {
-      return { numerator: 2, denominator: 4, confidence: 0.7 }; // 2/4 time
+    // Quarter note emphasis suggests simple time
+    if (halfPercentage > 0.25) {
+      return { numerator: 2, denominator: 4, confidence: 0.75 };
+    } else if (eighthPercentage > 0.3) {
+      return { numerator: 4, denominator: 4, confidence: 0.8 };
     } else {
-      return { numerator: 4, denominator: 4, confidence: 0.8 }; // 4/4 time
+      return { numerator: 3, denominator: 4, confidence: 0.7 };
     }
-  } else if (halfPercentage > 0.3) {
-    return { numerator: 3, denominator: 4, confidence: 0.7 }; // 3/4 time (waltz)
+  } else if (halfPercentage > 0.4) {
+    // Half note emphasis suggests slow tempo or 2/2 time
+    return { numerator: 2, denominator: 2, confidence: 0.7 };
   }
   
   // Default fallback
@@ -282,12 +459,10 @@ function getKeySignatureSharps(key: string, mode: 'major' | 'minor'): number {
   return mode === 'major' ? (majorKeys[key] || 0) : (minorKeys[key] || 0);
 }
 
-// Krumhansl-Schmuckler key detection algorithm
 function detectKeySignature(notes: MidiNote[]): KeySignature {
   const chromaVector = new Array(12).fill(0);
   let totalDuration = 0;
   
-  // Calculate chroma vector weighted by duration and velocity
   notes.forEach(note => {
     const chroma = note.noteNumber % 12;
     const weight = note.duration * (note.velocity / 127);
@@ -295,7 +470,6 @@ function detectKeySignature(notes: MidiNote[]): KeySignature {
     totalDuration += weight;
   });
   
-  // Normalize chroma vector
   if (totalDuration > 0) {
     for (let i = 0; i < 12; i++) {
       chromaVector[i] /= totalDuration;
@@ -307,9 +481,7 @@ function detectKeySignature(notes: MidiNote[]): KeySignature {
   let bestCorrelation = -1;
   let bestSharps = 0;
   
-  // Test all 24 major and minor keys
   for (let tonic = 0; tonic < 12; tonic++) {
-    // Test major key
     const majorCorr = calculateCorrelation(chromaVector, MAJOR_KEY_PROFILE, tonic);
     if (majorCorr > bestCorrelation) {
       bestCorrelation = majorCorr;
@@ -318,7 +490,6 @@ function detectKeySignature(notes: MidiNote[]): KeySignature {
       bestSharps = getKeySignatureSharps(bestKey, bestMode);
     }
     
-    // Test minor key
     const minorCorr = calculateCorrelation(chromaVector, MINOR_KEY_PROFILE, tonic);
     if (minorCorr > bestCorrelation) {
       bestCorrelation = minorCorr;
@@ -347,7 +518,6 @@ function parseKeySignature(sharps: number): KeySignature {
     const key = flatMajorKeys[-sharps];
     return { key, mode: 'major', sharps, confidence: 1.0 };
   } else {
-    // Invalid key signature, default to C major
     return { key: 'C', mode: 'major', sharps: 0, confidence: 0.5 };
   }
 }
