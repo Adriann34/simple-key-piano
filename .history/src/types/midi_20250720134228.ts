@@ -15,11 +15,5 @@ export interface MidiData {
     denominator: number;
   };
   keySignature: number;
-  keyName: string;
-  keyMode: 'major' | 'minor';
-  tempoChanges: Array<{ time: number; tempo: number }>;
-  confidence: {
-    key: number;
-    timeSignature: number;
-  };
+  tempo: number;
 }
